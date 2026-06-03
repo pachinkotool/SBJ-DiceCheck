@@ -34,10 +34,8 @@ def calculate_likelihood(target_limit, current_suika, dice_category):
 
 # セッション状態（データ保持用）の初期化
 if "history" not in st.session_state:
-    st.session_state.history = [
-        {"dice": "43", "suika": 3},
-        {"dice": "24", "suika": 12},
-    ]
+    st.session_state.history = []
+
 
 # --- 入力エリア ---
 st.subheader("📥 データの入力")
