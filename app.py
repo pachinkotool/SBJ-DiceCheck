@@ -12,10 +12,12 @@ def get_dice_category(dice_str):
     dice_str = str(dice_str).strip()
     if len(dice_str) != 2 or not dice_str.isdigit(): return "その他"
     d1, d2 = int(dice_str[0]), int(dice_str[1])
+    
+    # 判定の優先順位を入れ替え、13などの「奇数×奇数」が「合計5以下」に横取りされないようにしました
     if d1 == d2: return f"ゾロ目_{d1}"
-    if (d1 + d2) <= 5: return "合計5以下"
     if (d1 % 2 == 0) and (d2 % 2 == 0): return "偶数×偶数"
     if (d1 % 2 != 0) and (d2 % 2 != 0): return "奇数×奇数"
+    if (d1 + d2) <= 5: return "合計5以下"
     return "その他"
 
 def calculate_likelihood(target_limit, current_suika, dice_category):
@@ -30,7 +32,7 @@ def calculate_likelihood(target_limit, current_suika, dice_category):
     tens_digit = (remaining // 10) % 10
     if dice_category == "偶数×偶数" and tens_digit % 2 != 0: return 0.0
     if dice_category == "奇数×奇数" and tens_digit % 2 == 0: return 0.0
-    return {"偶数×偶数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35}, "奇数×奇数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35}, "その他": {"1-29": 0.45, "30-49": 0.50, "50+": 0.65}}.get(dice_category, {"1-29": 0.45, "30-49": 0.50, "50+": 0.65})[state]
+    return {"偶数×偶数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35}, "奇数×奇数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35}, "other": {"1-29": 0.45, "30-49": 0.50, "50+": 0.65}}.get(dice_category, {"1-29": 0.45, "30-49": 0.50, "50+": 0.65})[state]
 
 # セッション状態（データ保持用）の初期化
 if "history" not in st.session_state:
@@ -64,8 +66,12 @@ if st.session_state.history:
             st.rerun()
 else:
     st.info("履歴がありません。上のフォームから追加してください。")
+    # 【変更箇所】ご指定通り、2つの履歴が同時に読み込まれるようにしました
     if st.button("🔄 サンプルデータを読み込む"):
-        st.session_state.history = [{"dice": "43", "suika": 3}, {"dice": "24", "suika": 12}]
+        st.session_state.history = [
+            {"dice": "56", "suika": 3},
+            {"dice": "13", "suika": 11}
+        ]
         st.rerun()
 
 st.markdown("---")
@@ -86,6 +92,7 @@ if st.session_state.history:
         if total_likelihood > 0:
             for limit in new_probs.keys(): current_probs[limit] = new_probs[limit] / total_likelihood
         else:
+            # 矛盾を検知したときの表示
             st.error(f"❌ 矛盾発生: {i+1}回目 (出目:{imp['dice']} / スイカ:{imp['suika']}回)")
             conflict_detected = True
             break
@@ -122,4 +129,3 @@ if st.session_state.history:
         show_df = res_df.copy()
         show_df["確率"] = show_df["確率"].map("{:.1f}%".format)
         st.dataframe(show_df[["規定", "確率"]], use_container_width=True)
-
