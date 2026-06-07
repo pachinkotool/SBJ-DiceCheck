@@ -43,7 +43,7 @@ def calculate_likelihood(target_limit, total_suika, dice_category):
         "奇数×奇数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35},
         "その他": {"1-29": 0.45, "30-49": 0.50, "50+": 0.65}
     }
-    return prob_table.get(dice_category, prob_table["その他"])[state]
+    return prob_table.get(dice_category, prob_table["開閉"] if "開閉" in prob_table else prob_table["その他"])[state]
 
 def binomial_pdf(n, k, p):
     if n < 0 or k < 0 or k > n: return 0.0
@@ -61,7 +61,17 @@ if "prev_game" not in st.session_state: st.session_state.prev_game = 0
 # --- モード選択 ---
 use_prev_player = st.checkbox("前任者あり（途中参加）", value=False)
 
-# 【修正箇所】入力欄と3つのボタンを綺麗に1行に横並びにする
+# 【追加機能】ボタンの余白を削って1行に美しく収めるための隠しCSS
+st.markdown("""
+    <style>
+    div[data-testid="stButton"] button {
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        height: 2.5rem !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 if use_prev_player:
     col_g, col_b1, col_b2, col_b3 = st.columns([4, 1, 1, 1])
     with col_g:
