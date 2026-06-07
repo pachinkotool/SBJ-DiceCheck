@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import math
 
 # ページの設定
 st.set_page_config(page_title="規定回数 推測ツール", layout="centered")
@@ -7,6 +8,7 @@ st.title("🎯 規定スイカ回数 推測ツール")
 
 # 初期データ（規定回数ごとの事前確率）
 PRIOR_PROBS = {10: 0.066, 15: 0.031, 20: 0.059, 25: 0.031, 30: 0.125, 35: 0.078, 40: 0.227, 45: 0.078, 50: 0.227, 100: 0.078}
+SUIKA_DENOMINATOR = 99.9  # スイカ確率の分母
 
 def get_dice_category(dice_str):
     dice_str = str(dice_str).strip()
@@ -24,36 +26,65 @@ def calculate_likelihood(target_limit, total_suika, dice_category):
     if remaining <= 0: return 0.0
     state = "1-29" if 1 <= remaining <= 29 else "30-49" if 30 <= remaining <= 49 else "50+"
     
-    # ゾロ目の判定
     if "ゾロ目" in dice_category:
         if state != "1-29": return 0.0
         num = int(dice_category.split("_")[1])
         return 0.25 if remaining <= {1: 5, 2: 10, 3: 15, 4: 20, 5: 25, 6: 30}[num] else 0.0
         
-    # 合計5以下の判定
     if dice_category == "合計5以下": 
         return 0.15 if state == "1-29" else 0.0
         
-    # 偶数×偶数・奇数×奇数の10の位チェック（足切り）
     tens_digit = (remaining // 10) % 10
     if dice_category == "偶数×偶数" and tens_digit % 2 != 0: return 0.0
     if dice_category == "奇数×奇数" and tens_digit % 2 == 0: return 0.0
     
-    # 【バグ修正箇所】正しいカテゴリの確率データを確実に引き出すように修正
     prob_table = {
         "偶数×偶数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35},
         "奇数×奇数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35},
         "その他": {"1-29": 0.45, "30-49": 0.50, "50+": 0.65}
     }
-    
     return prob_table.get(dice_category, prob_table["その他"])[state]
 
-# セッション状態（データ保持用）の初期化
-if "history" not in st.session_state:
-    st.session_state.history = []
+# 二項分布の確率（前任者スイカ回数の現実的な起きやすさ＝倍率）を計算する関数
+def binomial_pdf(n, k, p):
+    if n < 0 or k < 0 or k > n: return 0.0
+    try:
+        log_comb = math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
+        log_prob = log_comb + k * math.log(p) + (n - k) * math.log(1.0 - p)
+        return math.exp(log_prob)
+    except:
+        return 0.0
+
+# セッション状態の初期化
+if "history" not in st.session_state: st.session_state.history = []
+if "prev_game" not in st.session_state: st.session_state.prev_game = 0
 
 # --- モード選択 ---
 use_prev_player = st.checkbox("前任者あり（途中参加）", value=False)
+
+# 前任者ありの場合のみゲーム数入力欄とクイックボタンを表示
+if use_prev_player:
+    col_g, col_b1, col_b2, col_b3 = st.columns([3, 1, 1, 1])
+    with col_g:
+        # セッション状態と連動した手入力欄
+        st.session_state.prev_game = st.number_input("前任者のゲーム数", min_value=0, value=st.session_state.prev_game, step=1)
+    with col_b1:
+        st.write("") # 位置調整用
+        if st.button("＋1", use_container_width=True):
+            st.session_state.prev_game += 1
+            st.rerun()
+    with col_b2:
+        st.write("")
+        if st.button("＋10", use_container_width=True):
+            st.session_state.prev_game += 10
+            st.rerun()
+    with col_b3:
+        st.write("")
+        if st.button("＋100", use_container_width=True):
+            st.session_state.prev_game += 100
+            st.rerun()
+
+st.markdown("---")
 
 # --- 入力エリア ---
 st.subheader("📥 データの入力")
@@ -88,14 +119,31 @@ st.markdown("---")
 # --- 計算・結果表示エリア ---
 if st.session_state.history:
     current_probs = {}
-    if use_prev_player:
-        # 実戦的な上限（最大30回）で前任者の可能性を等価で広げる
+    p_suika = 1.0 / SUIKA_DENOMINATOR
+    
+    if use_prev_player and st.session_state.prev_game > 0:
+        # 前任者のゲーム数に基づき、0〜30回の各パターンの現実的な確率（二項分布）を初期重み（倍率）とする
+        total_weight = 0.0
+        temp_weights = {}
         for limit, p_limit in PRIOR_PROBS.items():
             for prev_s in range(31):
-                current_probs[(limit, prev_s)] = p_limit * (1.0 / 31.0)
+                # 前任者ゲーム数におけるスイカ回数の出現確率を計算
+                weight = binomial_pdf(st.session_state.prev_game, prev_s, p_suika)
+                temp_weights[(limit, prev_s)] = p_limit * weight
+                total_weight += temp_weights[(limit, prev_s)]
+        
+        # 規格化（合計が1.0になるように補正）
+        if total_weight > 0:
+            for k, v in temp_weights.items(): current_probs[k] = v / total_weight
+        else:
+            # ゲーム数に対して30回が少なすぎる等でエラーになった場合の安全弁（一律等価）
+            for limit, p_limit in PRIOR_PROBS.items():
+                for prev_s in range(31): current_probs[(limit, prev_s)] = p_limit * (1.0 / 31.0)
     else:
+        # 前任者なし、またはゲーム数0の場合は、前任者スイカ0回固定
         for limit, p_limit in PRIOR_PROBS.items():
-            current_probs[(limit, 0)] = p_limit
+            for prev_s in range(31):
+                current_probs[(limit, prev_s)] = p_limit if prev_s == 0 else 0.0
 
     conflict_detected = False
     
