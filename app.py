@@ -23,15 +23,30 @@ def calculate_likelihood(target_limit, total_suika, dice_category):
     remaining = target_limit - total_suika
     if remaining <= 0: return 0.0
     state = "1-29" if 1 <= remaining <= 29 else "30-49" if 30 <= remaining <= 49 else "50+"
+    
+    # ゾロ目の判定
     if "ゾロ目" in dice_category:
         if state != "1-29": return 0.0
         num = int(dice_category.split("_")[1])
         return 0.25 if remaining <= {1: 5, 2: 10, 3: 15, 4: 20, 5: 25, 6: 30}[num] else 0.0
-    if dice_category == "合計5以下": return 0.15 if state == "1-29" else 0.0
+        
+    # 合計5以下の判定
+    if dice_category == "合計5以下": 
+        return 0.15 if state == "1-29" else 0.0
+        
+    # 偶数×偶数・奇数×奇数の10の位チェック（足切り）
     tens_digit = (remaining // 10) % 10
     if dice_category == "偶数×偶数" and tens_digit % 2 != 0: return 0.0
     if dice_category == "奇数×奇数" and tens_digit % 2 == 0: return 0.0
-    return {"偶数×偶数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35}, "奇数×奇数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35}, "other": {"1-29": 0.45, "30-49": 0.50, "50+": 0.65}}.get(dice_category, {"1-29": 0.45, "30-49": 0.50, "50+": 0.65})[state]
+    
+    # 【バグ修正箇所】正しいカテゴリの確率データを確実に引き出すように修正
+    prob_table = {
+        "偶数×偶数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35},
+        "奇数×奇数": {"1-29": 0.15, "30-49": 0.50, "50+": 0.35},
+        "その他": {"1-29": 0.45, "30-49": 0.50, "50+": 0.65}
+    }
+    
+    return prob_table.get(dice_category, prob_table["その他"])[state]
 
 # セッション状態（データ保持用）の初期化
 if "history" not in st.session_state:
@@ -67,27 +82,18 @@ if st.session_state.history:
             st.rerun()
 else:
     st.info("履歴がありません。上のフォームから追加してください。")
-    if st.button("🔄 サンプルデータを読み込む"):
-        st.session_state.history = [
-            {"dice": "56", "suika": 3},
-            {"dice": "13", "suika": 11}
-        ]
-        st.rerun()
 
 st.markdown("---")
 
 # --- 計算・結果表示エリア ---
 if st.session_state.history:
-    # 確率空間の初期化
-    # 2次元のキー (規定回数, 前任者スイカ回数) で管理
     current_probs = {}
     if use_prev_player:
-        # 前任者ありの場合、前任者スイカ0〜100回をすべて等価として初期化
+        # 実戦的な上限（最大30回）で前任者の可能性を等価で広げる
         for limit, p_limit in PRIOR_PROBS.items():
-            for prev_s in range(101):
-                current_probs[(limit, prev_s)] = p_limit * (1.0 / 101.0)
+            for prev_s in range(31):
+                current_probs[(limit, prev_s)] = p_limit * (1.0 / 31.0)
     else:
-        # 前任者なしの場合、前任者スイカは0回固定
         for limit, p_limit in PRIOR_PROBS.items():
             current_probs[(limit, 0)] = p_limit
 
@@ -99,7 +105,6 @@ if st.session_state.history:
         total_likelihood = 0
         
         for (limit, prev_s) in current_probs.keys():
-            # 本当の累計スイカ回数 = 前任者分 + 自身分
             total_suika = prev_s + imp['suika']
             likelihood = calculate_likelihood(limit, total_suika, dice_cat)
             new_probs[(limit, prev_s)] = current_probs[(limit, prev_s)] * likelihood
@@ -114,7 +119,6 @@ if st.session_state.history:
             break
 
     if not conflict_detected:
-        # 規定回数ごとに前任者スイカの確率を合算（集計）
         aggregated_probs = {limit: 0.0 for limit in PRIOR_PROBS.keys()}
         for (limit, prev_s), prob in current_probs.items():
             aggregated_probs[limit] += prob
@@ -123,7 +127,6 @@ if st.session_state.history:
         latest_suika = st.session_state.history[-1]['suika']
         mean_limit = sum(k * v for k, v in aggregated_probs.items())
         
-        # 自身スイカ基準での残り予測
         w_5 = sum(v for k, v in aggregated_probs.items() if k - latest_suika <= 5) * 100
         w_10 = sum(v for k, v in aggregated_probs.items() if k - latest_suika <= 10) * 100
         w_20 = sum(v for k, v in aggregated_probs.items() if k - latest_suika <= 20) * 100
@@ -134,19 +137,15 @@ if st.session_state.history:
         elif w_20 > 50 or mean_limit - latest_suika <= 20: rank = "B"
         elif mean_limit - latest_suika <= 35: rank = "C"
 
-        # 要約メッセージの表示
         st.subheader("🏆 分析結果")
         
-        # 3つの主要指標をカード形式で表示
         m1, m2, m3 = st.columns(3)
         m1.metric("最有力 規定", f"{res_df.iloc[0]['規定']}", f"{res_df.iloc[0]['確率']:.1f}%")
         m2.metric("平均規定まで (自身)", f"あと {(mean_limit - latest_suika):.1f} 回", f"平均: {mean_limit:.1f}回")
         m3.metric("現在のランク", f"ランク {rank}")
 
-        # 近い回数の確率
         st.markdown(f"🎯 **自身あと5回以内:** {w_5:.1f}% | **10回以内:** {w_10:.1f}% | **20回以内:** {w_20:.1f}%")
 
-        # 詳細な確率テーブル
         st.write("📈 **詳細確率ランキング**")
         show_df = res_df.copy()
         show_df["確率"] = show_df["確率"].map("{:.1f}%".format)
