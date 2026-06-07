@@ -45,7 +45,6 @@ def calculate_likelihood(target_limit, total_suika, dice_category):
     }
     return prob_table.get(dice_category, prob_table["その他"])[state]
 
-# 二項分布の確率（前任者スイカ回数の現実的な起きやすさ＝倍率）を計算する関数
 def binomial_pdf(n, k, p):
     if n < 0 or k < 0 or k > n: return 0.0
     try:
@@ -62,24 +61,20 @@ if "prev_game" not in st.session_state: st.session_state.prev_game = 0
 # --- モード選択 ---
 use_prev_player = st.checkbox("前任者あり（途中参加）", value=False)
 
-# 前任者ありの場合のみゲーム数入力欄とクイックボタンを表示
+# 【修正箇所】入力欄と3つのボタンを綺麗に1行に横並びにする
 if use_prev_player:
-    col_g, col_b1, col_b2, col_b3 = st.columns([3, 1, 1, 1])
+    col_g, col_b1, col_b2, col_b3 = st.columns([4, 1, 1, 1])
     with col_g:
-        # セッション状態と連動した手入力欄
-        st.session_state.prev_game = st.number_input("前任者のゲーム数", min_value=0, value=st.session_state.prev_game, step=1)
+        st.session_state.prev_game = st.number_input("前任者のゲーム数", min_value=0, value=st.session_state.prev_game, step=1, label_visibility="collapsed")
     with col_b1:
-        st.write("") # 位置調整用
         if st.button("＋1", use_container_width=True):
             st.session_state.prev_game += 1
             st.rerun()
     with col_b2:
-        st.write("")
         if st.button("＋10", use_container_width=True):
             st.session_state.prev_game += 10
             st.rerun()
     with col_b3:
-        st.write("")
         if st.button("＋100", use_container_width=True):
             st.session_state.prev_game += 100
             st.rerun()
@@ -122,25 +117,20 @@ if st.session_state.history:
     p_suika = 1.0 / SUIKA_DENOMINATOR
     
     if use_prev_player and st.session_state.prev_game > 0:
-        # 前任者のゲーム数に基づき、0〜30回の各パターンの現実的な確率（二項分布）を初期重み（倍率）とする
         total_weight = 0.0
         temp_weights = {}
         for limit, p_limit in PRIOR_PROBS.items():
             for prev_s in range(31):
-                # 前任者ゲーム数におけるスイカ回数の出現確率を計算
                 weight = binomial_pdf(st.session_state.prev_game, prev_s, p_suika)
                 temp_weights[(limit, prev_s)] = p_limit * weight
                 total_weight += temp_weights[(limit, prev_s)]
         
-        # 規格化（合計が1.0になるように補正）
         if total_weight > 0:
             for k, v in temp_weights.items(): current_probs[k] = v / total_weight
         else:
-            # ゲーム数に対して30回が少なすぎる等でエラーになった場合の安全弁（一律等価）
             for limit, p_limit in PRIOR_PROBS.items():
                 for prev_s in range(31): current_probs[(limit, prev_s)] = p_limit * (1.0 / 31.0)
     else:
-        # 前任者なし、またはゲーム数0の場合は、前任者スイカ0回固定
         for limit, p_limit in PRIOR_PROBS.items():
             for prev_s in range(31):
                 current_probs[(limit, prev_s)] = p_limit if prev_s == 0 else 0.0
